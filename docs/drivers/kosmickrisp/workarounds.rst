@@ -49,6 +49,49 @@ info on what was updated.
 Workarounds
 ===========
 
+KK_WORKAROUND_11
+----------------
+| macOS version: 26.5
+| Metal ticket: FB22683138
+| Metal ticket status: Waiting resolution
+| CTS test failure: ``dEQP-VK.api.object_management.multithreaded_per_thread_device.merged_pipeline_cache``
+| Comments:
+
+If multiple MTL4Compiler instances are created and used concurrently, they may
+corrupt the heap and crash the application. This has been verified
+independently of KosmicKrisp and reported to Apple using a small demo
+application which directly uses Metal.
+
+The CTS test in question here creates an instance, physical device, and device
+for each of multiple threads, and intentionally creates several pipelines in
+each thread at the same time.
+
+To work around this, maintain a table of devices to compilers, and use it to
+ensure that each device only has one compiler instance to share. `MTLDevice`
+instances are unique within the process, so no matter how many Vulkan devices
+we create, the same GPU uses the same `MTLDevice`. Each `MTL4Compiler` instance
+is still capable of performing concurrent compilation.
+
+KK_WORKAROUND_10
+----------------
+| macOS version: 26.4.1
+| Metal ticket: Not reported
+| Metal ticket status:
+| CTS test failure: ``dEQP-VK.subgroups.arithmetic.compute.subgroupinclusive*_vec4``
+| Comments:
+
+See comment
+https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/41186#note_3470793
+
+In short, certain ``ior`` operations can be and will be turned into ``bcsel``
+before reaching NIR to MSL. However, the MSL compiler seems to incorrectly
+handle ``bcsel`` and the compiled shader misbehaves while the ``ior`` version
+does not. This is worked around by adding a known true value to the conditional
+of the ``bcsel``.
+
+| Log:
+| 2026-05-14: Workaround implemented
+
 KK_WORKAROUND_9
 ---------------
 | macOS version: 26.4.1
@@ -207,11 +250,20 @@ KK_WORKAROUND_3
 | macOS version: 15.4.x
 | Metal ticket: FB20113490 (@aitor)
 | Metal ticket status: Waiting resolution
-| CTS test failure: ``dEQP-VK.subgroups.ballot_other.*.subgroupballotfindlsb``
+| CTS test failure: ``dEQP-VK.subgroups.ballot_other.*.subgroupballotfindlsb``, ``dEQP-VK.subgroups.arithmetic.graphics.*``, ``dEQP-VK.subgroups.shader_quad_control.divergent_condition``
 | Comments:
 
-``simd_is_first`` does not seem to behave as documented in the MSL
-specification. The following code snippet misbehaves:
+``simd_ballot`` within a conditional block does not seem to behave as
+documented in the MSL specification. For example, the following code blocks
+misbehave:
+
+.. code-block:: c
+
+   bool execute = (gl_SubGroupInvocation & 1u) != 0u;
+   if (execute)
+      temp = simd_ballot(true); /* <- This may return all active threads... */
+   else
+      temp = 2u;
 
 .. code-block:: c
 
@@ -220,17 +272,33 @@ specification. The following code snippet misbehaves:
    else
       temp = simd_ballot(true); /* <- This will return all active threads... */
 
-The way to fix this is by changing the conditional to:
+This appears to also apply to ``quad_any`` and ``quad_all``, and likely the
+``simd`` equivalents as well.
+
+The way to fix this is to use ``simd_or`` instead:
 
 .. code-block:: c
 
-   if (simd_is_first() && (ulong)simd_ballot(true))
-      temp = 3u;
+   bool execute = (gl_SubGroupInvocation & 1u) != 0u;
+   if (execute)
+      temp = simd_or(1 << gl_SubGroupInvocation);
    else
-      temp = (ulong)simd_ballot(true);
+      temp = 2u;
+
+Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
+
+.. code-block:: c
+
+   bool execute = (gl_SubGroupInvocation & 1u) != 0u;
+   if (execute && (ulong)simd_ballot(true))
+      temp = simd_ballot(true);
+   else
+      temp = 2u;
+
 
 | Log:
 | 2025-09-09: Workaround implemented and reported to Apple
+| 2026-04-28: Workaround updated to expand to all ballot/vote ops.
 
 KK_WORKAROUND_2
 ---------------

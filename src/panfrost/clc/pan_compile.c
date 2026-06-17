@@ -85,7 +85,7 @@ optimize(nir_shader *nir)
       NIR_PASS(progress, nir, nir_opt_deref);
       NIR_PASS(progress, nir, nir_opt_copy_prop_vars);
       NIR_PASS(progress, nir, nir_opt_undef);
-      NIR_PASS(progress, nir, nir_lower_undef_to_zero);
+      NIR_PASS(progress, nir, nir_lower_undef_to_zero, NULL);
 
       NIR_PASS(progress, nir, nir_opt_shrink_vectors, true);
       NIR_PASS(progress, nir, nir_opt_loop_unroll);
@@ -275,7 +275,7 @@ main(int argc, const char **argv)
 
    unsigned target_arch = atoi(target_arch_str);
 
-   if (target_arch < 4 || target_arch > 13) {
+   if (target_arch < 4 || target_arch > 14) {
       fprintf(stderr, "Unsupported target arch %d\n", target_arch);
       return 1;
    }

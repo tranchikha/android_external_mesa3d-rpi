@@ -153,15 +153,15 @@ anv_create_cmd_buffer(struct vk_command_pool *pool,
       goto fail_vk;
 
    anv_state_stream_init(&cmd_buffer->surface_state_stream,
-                         &device->internal_surface_state_pool, 4096);
+                         anv_device_get_internal_surface_state_pool(device), 4096);
    anv_state_stream_init(&cmd_buffer->dynamic_state_stream,
-                         &device->dynamic_state_pool, 16384);
+                         anv_device_get_dynamic_state_pool(device), 16384);
    anv_state_stream_init(&cmd_buffer->general_state_stream,
-                         &device->general_state_pool, 16384);
+                         anv_device_get_general_state_pool(device), 16384);
    anv_state_stream_init(&cmd_buffer->indirect_push_descriptor_stream,
-                         &device->indirect_push_descriptor_pool, 4096);
+                         anv_device_get_indirect_push_descriptor_pool(device), 4096);
    anv_state_stream_init(&cmd_buffer->push_descriptor_buffer_stream,
-                         &device->push_descriptor_buffer_pool, 4096);
+                         anv_device_get_push_descriptor_buffer_pool(device), 4096);
 
    int success = u_vector_init_pow2(&cmd_buffer->dynamic_bos, 8,
                                     sizeof(struct anv_bo *));
@@ -277,24 +277,24 @@ reset_cmd_buffer(struct anv_cmd_buffer *cmd_buffer,
 
    anv_state_stream_finish(&cmd_buffer->surface_state_stream);
    anv_state_stream_init(&cmd_buffer->surface_state_stream,
-                         &cmd_buffer->device->internal_surface_state_pool, 4096);
+                         anv_device_get_internal_surface_state_pool(cmd_buffer->device), 4096);
 
    anv_state_stream_finish(&cmd_buffer->dynamic_state_stream);
    anv_state_stream_init(&cmd_buffer->dynamic_state_stream,
-                         &cmd_buffer->device->dynamic_state_pool, 16384);
+                         anv_device_get_dynamic_state_pool(cmd_buffer->device), 16384);
 
    anv_state_stream_finish(&cmd_buffer->general_state_stream);
    anv_state_stream_init(&cmd_buffer->general_state_stream,
-                         &cmd_buffer->device->general_state_pool, 16384);
+                         anv_device_get_general_state_pool(cmd_buffer->device), 16384);
 
    anv_state_stream_finish(&cmd_buffer->indirect_push_descriptor_stream);
    anv_state_stream_init(&cmd_buffer->indirect_push_descriptor_stream,
-                         &cmd_buffer->device->indirect_push_descriptor_pool,
+                         anv_device_get_indirect_push_descriptor_pool(cmd_buffer->device),
                          4096);
 
    anv_state_stream_finish(&cmd_buffer->push_descriptor_buffer_stream);
    anv_state_stream_init(&cmd_buffer->push_descriptor_buffer_stream,
-                         &cmd_buffer->device->push_descriptor_buffer_pool, 4096);
+                         anv_device_get_push_descriptor_buffer_pool(cmd_buffer->device), 4096);
 
    while (u_vector_length(&cmd_buffer->dynamic_bos) > 0) {
       struct anv_bo **bo = u_vector_remove(&cmd_buffer->dynamic_bos);
@@ -666,13 +666,13 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
             struct anv_push_constants *push = &pipe_state->push_constants;
             uint64_t offset =
                anv_address_physical(set->desc_surface_addr) -
-               cmd_buffer->device->physical->va.internal_surface_state_pool.addr;
+               anv_physical_device_get_internal_surface_state_pool_va(cmd_buffer->device->physical)->addr;
             assert((offset & ~ANV_DESCRIPTOR_SET_OFFSET_MASK) == 0);
             push->desc_surface_offsets[set_index] &= ~ANV_DESCRIPTOR_SET_OFFSET_MASK;
             push->desc_surface_offsets[set_index] |= offset;
             push->desc_sampler_offsets[set_index] =
                anv_address_physical(set->desc_sampler_addr) -
-               cmd_buffer->device->physical->va.dynamic_state_pool.addr;
+               anv_physical_device_get_dynamic_state_pool_va(cmd_buffer->device->physical)->addr;
          }
       }
 
@@ -800,9 +800,9 @@ void anv_CmdBindDescriptorBuffersEXT(
    struct anv_cmd_state *state = &cmd_buffer->state;
 
    for (uint32_t i = 0; i < bufferCount; i++) {
-      assert(pBindingInfos[i].address >= cmd_buffer->device->physical->va.dynamic_visible_pool.addr &&
-             pBindingInfos[i].address < (cmd_buffer->device->physical->va.dynamic_visible_pool.addr +
-                                         cmd_buffer->device->physical->va.dynamic_visible_pool.size));
+      assert(pBindingInfos[i].address >= anv_physical_device_get_dynamic_visible_pool_va(cmd_buffer->device->physical)->addr &&
+             pBindingInfos[i].address < (anv_physical_device_get_dynamic_visible_pool_va(cmd_buffer->device->physical)->addr +
+                                         anv_physical_device_get_dynamic_visible_pool_va(cmd_buffer->device->physical)->size));
 
       if (state->descriptor_buffers.address[i] != pBindingInfos[i].address) {
          state->descriptor_buffers.address[i] = pBindingInfos[i].address;
@@ -967,14 +967,11 @@ void anv_CmdPushDataEXT(
    }
 }
 
-void anv_CmdBindVertexBuffers2(
-   VkCommandBuffer                              commandBuffer,
-   uint32_t                                     firstBinding,
-   uint32_t                                     bindingCount,
-   const VkBuffer*                              pBuffers,
-   const VkDeviceSize*                          pOffsets,
-   const VkDeviceSize*                          pSizes,
-   const VkDeviceSize*                          pStrides)
+void anv_CmdBindVertexBuffers3KHR(
+   VkCommandBuffer                             commandBuffer,
+   uint32_t                                    firstBinding,
+   uint32_t                                    bindingCount,
+   const VkBindVertexBuffer3InfoKHR*           pBindingInfos)
 {
    ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
    struct anv_vertex_binding *vb = cmd_buffer->state.vertex_bindings;
@@ -984,68 +981,57 @@ void anv_CmdBindVertexBuffers2(
 
    assert(firstBinding + bindingCount <= get_max_vbs(cmd_buffer->device->info));
    for (uint32_t i = 0; i < bindingCount; i++) {
-      ANV_FROM_HANDLE(anv_buffer, buffer, pBuffers[i]);
-
-      if (buffer == NULL) {
-         vb[firstBinding + i] = (struct anv_vertex_binding) { 0 };
-      } else {
+      if (vb[firstBinding + i].addr != pBindingInfos[i].addressRange.address ||
+          vb[firstBinding + i].size != pBindingInfos[i].addressRange.size) {
          vb[firstBinding + i] = (struct anv_vertex_binding) {
-            .addr = anv_address_physical(
-               anv_address_add(buffer->address, pOffsets[i])),
-            .size = vk_buffer_range(&buffer->vk, pOffsets[i],
-                                    pSizes ? pSizes[i] : VK_WHOLE_SIZE),
-            .mocs = anv_mocs(cmd_buffer->device, buffer->address.bo,
+            .addr = pBindingInfos[i].addressRange.address,
+            .size = pBindingInfos[i].addressRange.size,
+            .mocs = anv_mocs(cmd_buffer->device, NULL,
+                             ((pBindingInfos[i].addressFlags &
+                               VK_ADDRESS_COMMAND_PROTECTED_BIT_KHR) ?
+                              ISL_SURF_USAGE_PROTECTED_BIT : 0) |
                              ISL_SURF_USAGE_VERTEX_BUFFER_BIT),
          };
+         cmd_buffer->state.gfx.vb_dirty |= 1 << (firstBinding + i);
       }
-      cmd_buffer->state.gfx.vb_dirty |= 1 << (firstBinding + i);
    }
 
-   if (pStrides != NULL) {
-      vk_cmd_set_vertex_binding_strides(&cmd_buffer->vk, firstBinding,
-                                        bindingCount, pStrides);
-   }
+   vk_cmd_set_vertex_binding_strides2(&cmd_buffer->vk, firstBinding,
+                                      bindingCount, pBindingInfos);
 }
 
-void anv_CmdBindIndexBuffer2(
+void anv_CmdBindIndexBuffer3KHR(
     VkCommandBuffer                             commandBuffer,
-    VkBuffer                                    _buffer,
-    VkDeviceSize                                offset,
-    VkDeviceSize                                size,
-    VkIndexType                                 indexType)
+    const VkBindIndexBuffer3InfoKHR*            pInfo)
 {
    ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
-   ANV_FROM_HANDLE(anv_buffer, buffer, _buffer);
 
-   if (cmd_buffer->state.gfx.index_type != indexType) {
-      cmd_buffer->state.gfx.index_type = indexType;
+   if (cmd_buffer->state.gfx.index_type != pInfo->indexType) {
+      cmd_buffer->state.gfx.index_type = pInfo->indexType;
       cmd_buffer->state.gfx.dirty |= ANV_CMD_DIRTY_INDEX_TYPE;
    }
 
-   vk_cmd_set_index_buffer_type(&cmd_buffer->vk, indexType);
+   vk_cmd_set_index_buffer_type(&cmd_buffer->vk, pInfo->indexType);
 
-   uint64_t index_addr = buffer ?
-      anv_address_physical(anv_address_add(buffer->address, offset)) : 0;
-   uint32_t index_size = buffer ? vk_buffer_range(&buffer->vk, offset, size) : 0;
-   if (cmd_buffer->state.gfx.index_addr != index_addr ||
-       cmd_buffer->state.gfx.index_size != index_size) {
-      cmd_buffer->state.gfx.index_addr = index_addr;
-      cmd_buffer->state.gfx.index_size = index_size;
+   if (cmd_buffer->state.gfx.index_addr != pInfo->addressRange.address ||
+       cmd_buffer->state.gfx.index_size != pInfo->addressRange.size) {
+      cmd_buffer->state.gfx.index_addr = pInfo->addressRange.address;
+      cmd_buffer->state.gfx.index_size = pInfo->addressRange.size;
       cmd_buffer->state.gfx.index_mocs =
-         anv_mocs(cmd_buffer->device, buffer->address.bo,
+         anv_mocs(cmd_buffer->device, NULL,
+                  ((pInfo->addressFlags &
+                    VK_ADDRESS_COMMAND_PROTECTED_BIT_KHR) ?
+                   ISL_SURF_USAGE_PROTECTED_BIT : 0) |
                   ISL_SURF_USAGE_INDEX_BUFFER_BIT);
       cmd_buffer->state.gfx.dirty |= ANV_CMD_DIRTY_INDEX_BUFFER;
    }
 }
 
-
-void anv_CmdBindTransformFeedbackBuffersEXT(
+void anv_CmdBindTransformFeedbackBuffers2EXT(
     VkCommandBuffer                             commandBuffer,
     uint32_t                                    firstBinding,
     uint32_t                                    bindingCount,
-    const VkBuffer*                             pBuffers,
-    const VkDeviceSize*                         pOffsets,
-    const VkDeviceSize*                         pSizes)
+    const VkBindTransformFeedbackBuffer2InfoEXT* pBindingInfos)
 {
    ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
    struct anv_xfb_binding *xfb = cmd_buffer->state.xfb_bindings;
@@ -1055,16 +1041,16 @@ void anv_CmdBindTransformFeedbackBuffersEXT(
 
    assert(firstBinding + bindingCount <= MAX_XFB_BUFFERS);
    for (uint32_t i = 0; i < bindingCount; i++) {
-      if (pBuffers[i] == VK_NULL_HANDLE) {
+      if (pBindingInfos[i].addressRange.size == 0) {
          xfb[firstBinding + i] = (struct anv_xfb_binding) { 0 };
       } else {
-         ANV_FROM_HANDLE(anv_buffer, buffer, pBuffers[i]);
          xfb[firstBinding + i] = (struct anv_xfb_binding) {
-            .addr = anv_address_physical(
-               anv_address_add(buffer->address, pOffsets[i])),
-            .size = vk_buffer_range(&buffer->vk, pOffsets[i],
-                                    pSizes ? pSizes[i] : VK_WHOLE_SIZE),
-            .mocs = anv_mocs(cmd_buffer->device, buffer->address.bo,
+            .addr = pBindingInfos[i].addressRange.address,
+            .size = pBindingInfos[i].addressRange.size,
+            .mocs = anv_mocs(cmd_buffer->device, NULL,
+                             ((pBindingInfos[i].addressFlags &
+                               VK_ADDRESS_COMMAND_PROTECTED_BIT_KHR) ?
+                              ISL_SURF_USAGE_PROTECTED_BIT : 0) |
                              ISL_SURF_USAGE_STREAM_OUT_BIT),
          };
       }
@@ -1731,7 +1717,6 @@ bind_graphics_shaders(struct anv_cmd_buffer *cmd_buffer,
                diff_fix_state(VF_SGVS_2,             vs.vf_sgvs_2);
             diff_fix_state(VF_COMPONENT_PACKING,     vs.vf_component_packing);
             diff_var_state(VF_SGVS_INSTANCING,       vs.vf_sgvs_instancing);
-            gfx->vs_source_hash = shader->prog_data->source_hash;
          } else {
             BITSET_SET(hw_state->pack_dirty, ANV_GFX_STATE_VS);
          }
@@ -1787,7 +1772,6 @@ bind_graphics_shaders(struct anv_cmd_buffer *cmd_buffer,
             diff_fix_state(WM,                       ps.wm);
             diff_fix_state(PS,                       ps.ps);
             diff_fix_state(PS_EXTRA,                 ps.ps_extra);
-            gfx->fs_source_hash = shader->prog_data->source_hash;
          } else {
             BITSET_SET(hw_state->pack_dirty, ANV_GFX_STATE_PS_EXTRA);
          }

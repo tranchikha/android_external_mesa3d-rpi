@@ -210,7 +210,7 @@ si_aco_resolve_symbols(struct si_shader *shader, uint32_t *code_for_write,
 
 static void
 si_aco_build_shader_part_binary(void** priv_ptr, uint32_t num_sgprs, uint32_t num_vgprs,
-                                const uint32_t* code, uint32_t code_dw_size,
+                                uint32_t exec_size, const uint32_t* code, uint32_t code_dw_size,
                                 const char* disasm_str, uint32_t disasm_size)
 {
    struct si_shader_part *result = (struct si_shader_part *)priv_ptr;
@@ -222,7 +222,7 @@ si_aco_build_shader_part_binary(void** priv_ptr, uint32_t num_sgprs, uint32_t nu
    result->binary.type = SI_SHADER_BINARY_RAW;
    result->binary.code_buffer = buffer;
    result->binary.code_size = code_size;
-   result->binary.exec_size = code_size;
+   result->binary.exec_size = exec_size;
 
    if (disasm_size) {
       memcpy(buffer + code_size, disasm_str, disasm_size);
@@ -253,15 +253,15 @@ si_aco_build_ps_prolog(struct aco_compiler_options *options,
       .force_linear_sample_interp = key->ps_prolog.states.force_linear_sample_interp,
       .force_persp_center_interp = key->ps_prolog.states.force_persp_center_interp,
       .force_linear_center_interp = key->ps_prolog.states.force_linear_center_interp,
+      .uses_persp_centroid = key->ps_prolog.uses_persp_centroid,
+      .uses_linear_centroid = key->ps_prolog.uses_linear_centroid,
 
       .samplemask_log_ps_iter = key->ps_prolog.states.samplemask_log_ps_iter,
-      .get_frag_coord_from_pixel_coord = key->ps_prolog.states.get_frag_coord_from_pixel_coord,
-      .pixel_center_integer = key->ps_prolog.pixel_center_integer,
       .force_samplemask_to_helper_invocation = key->ps_prolog.states.force_samplemask_to_helper_invocation,
       .num_interp_inputs = key->ps_prolog.num_interp_inputs,
       .colors_read = key->ps_prolog.colors_read,
-      .color_interp_vgpr_index[0] = key->ps_prolog.color_interp_vgpr_index[0],
-      .color_interp_vgpr_index[1] = key->ps_prolog.color_interp_vgpr_index[1],
+      .color_interp[0] = key->ps_prolog.color_interp[0],
+      .color_interp[1] = key->ps_prolog.color_interp[1],
       .color_attr_index[0] = key->ps_prolog.color_attr_index[0],
       .color_attr_index[1] = key->ps_prolog.color_attr_index[1],
       .color_two_side = key->ps_prolog.states.color_two_side,

@@ -235,6 +235,24 @@ bi_collect_v2i32(bi_builder *b, bi_index s0, bi_index s1)
    return dst;
 }
 
+static void
+bi_split_i64_for_shadd(bi_builder *b, bi_index src, bi_index out[2])
+{
+   bi_index tmp[4] = {bi_null(), bi_null(), bi_null(), bi_null()};
+   bi_emit_split_i32(b, tmp, src, 2);
+   out[0] = tmp[0];
+   out[1] = tmp[1];
+}
+
+static bi_index
+bi_materialize_i64_for_shadd(bi_builder *b, bi_index src)
+{
+   bi_index components[2] = {bi_null(), bi_null()};
+   bi_split_i64_for_shadd(b, src, components);
+
+   return bi_collect_v2i32(b, components[0], components[1]);
+}
+
 static inline bi_instr *
 bi_f32_to_f16_to(bi_builder *b, bi_index dest, bi_index src)
 {
@@ -703,8 +721,10 @@ bi_emit_load_var_buf(bi_builder *b, nir_intrinsic_instr *intr)
    assert(intr->intrinsic == nir_intrinsic_load_var_buf_pan ||
           intr->intrinsic == nir_intrinsic_load_var_buf_flat_pan);
 
+   const unsigned arch = b->shader->arch;
+
    /* These are only available on Valhall+ */
-   assert(b->shader->arch >= 9);
+   assert(arch >= 9);
 
    const bool flat = intr->intrinsic == nir_intrinsic_load_var_buf_flat_pan;
    const nir_alu_type src_type = nir_intrinsic_src_type(intr);
@@ -757,19 +777,36 @@ bi_emit_load_var_buf(bi_builder *b, nir_intrinsic_instr *intr)
    bool use_imm_form = false;
    if (nir_src_is_const(intr->src[0])) {
       imm_offset = nir_src_as_uint(intr->src[0]);
-      assert(imm_offset < pan_ld_var_buf_off_size(b->shader->arch));
+      assert(imm_offset < pan_ld_var_buf_off_size(arch));
 
       use_imm_form = true;
    }
 
+   /* On v14+, flat source formats are removed from LD_VAR_BUF/LD_VAR_BUF_IMM,
+    * so flat buffer varyings must use the dedicated LD_VAR_BUF_FLAT*.
+    */
    if (use_imm_form) {
-      bi_ld_var_buf_imm_to(b, sz, dest, src0, regfmt, sample, source_format,
+      if (arch >= 14 && flat) {
+         bi_ld_var_buf_flat_imm_to(b, dest, regfmt, vecsize, imm_offset);
+      } else {
+         bi_ld_var_buf_imm_to(b, sz, dest, src0, regfmt, sample, source_format,
                            BI_UPDATE_STORE, vecsize, imm_offset);
+      }
    } else {
       bi_index offset = bi_src_index(&intr->src[0]);
-      bi_ld_var_buf_to(b, sz, dest, src0, offset, regfmt, sample,
-                       source_format, BI_UPDATE_STORE, vecsize);
+      if (arch >= 14 && flat) {
+         bi_ld_var_buf_flat_to(b, dest, offset, regfmt, vecsize);
+      } else {
+         bi_ld_var_buf_to(b, sz, dest, src0, offset, regfmt, sample,
+                          source_format, BI_UPDATE_STORE, vecsize);
+      }
    }
+
+   /* LD_VAR_BUF_FLAT* only support register formats F16 and F32. */
+   assert(
+      arch < 14 || !flat ||
+      (regfmt == BI_REGISTER_FORMAT_F16 || regfmt == BI_REGISTER_FORMAT_F32));
+
    bi_split_def(b, &intr->def);
 }
 
@@ -2063,9 +2100,16 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       bi_emit_st_tile(b, instr);
       break;
 
-   case nir_intrinsic_demote_if:
-      bi_discard_b32(b, bi_src_index(&instr->src[0]));
+   case nir_intrinsic_demote_if: {
+      bi_index src0 = bi_src_index(&instr->src[0]);
+      unsigned bs = nir_src_bit_size(instr->src[0]);
+      assert(bs == 16 || bs == 32);
+
+      if (bs == 16)
+         src0 = bi_half(src0, false);
+      bi_discard_b32(b, src0);
       break;
+   }
 
    case nir_intrinsic_demote:
       bi_discard_f32(b, bi_zero(), bi_zero(), BI_CMPF_EQ);
@@ -2233,6 +2277,12 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       break;
 
    case nir_intrinsic_load_view_index:
+      if (b->shader->arch >= 14 && b->shader->stage == MESA_SHADER_VERTEX) {
+         bi_mov_i32_to(b, dst, bi_preload(b, BI_PRELOAD_VIEW_ID));
+         break;
+      }
+      FALLTHROUGH;
+
    case nir_intrinsic_load_layer_id:
       assert(b->shader->arch >= 9);
       bi_mov_i32_to(
@@ -3422,6 +3472,8 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
    case nir_op_iadd:
       if (sz == 64) {
          assert(b->shader->arch >= 9);
+         s0 = bi_materialize_i64_for_shadd(b, s0);
+         s1 = bi_materialize_i64_for_shadd(b, s1);
          bi_shaddx_s64_to(b, dst, s0, s1, 0);
          bi_index dsts[4] = {bi_null(), bi_null(), bi_null(), bi_null()};
          bi_emit_split_i32(b, dsts, dst, 2);

@@ -266,6 +266,7 @@ dEQP-VK.synchronization.*_tess_ctrl.*
 dEQP-VK.synchronization.*_tess_control.*
 dEQP-VK.synchronization.*_tess_eval.*
 dEQP-VK.tessellation.invariance.*
+dEQP-VK.tessellation.tesscoord.*
 
 # Updated by ci-collate
 spec@arb_gpu_shader_fp64@execution@arb_gpu_shader_fp64-wrong-type-setter
@@ -371,7 +372,16 @@ angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.rg8_sno
 angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.rg8_snorm_r16ui.texture2d_to_cubemap
 angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.rg8i_r16ui.texture2d_to_cubemap
 angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.rg8ui_r16i.texture2d_to_cubemap
+angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.r16f_rg8i.texture2d_array_to_renderbuffer
+angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.r16ui_r16f.texture2d_array_to_texture2d_array
+angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.r16ui_r16i.cubemap_to_texture2d
+angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.r16ui_r16i.renderbuffer_to_cubemap
+angle-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.r16ui_r16ui.texture2d_to_cubemap
 angle-dEQP-GLES31.functional.state_query.program.tesselation_shader_state_get_programiv
+angle-dEQP-GLES31.functional.texture.specification.texsubimage3d_depth.depth_component16_cube_array
+
+# Autotune regression
+angle-dEQP-GLES3.functional.fbo.msaa.4_samples.rgb5_a1
 
 # Android flakes
 android-dEQP-VK.binding_model.shader_access.primary_cmd_buf.bind.with_template.sampler_mutable.no_access.single_descriptor.2d_array_base_mip
@@ -379,3 +389,6 @@ android-dEQP-VK.pipeline.fast_linked_library.stencil.nocolor.format.d24_unorm_s8
 android-dEQP-VK.pipeline.fast_linked_library.stencil.nocolor.format.s8_uint.states.fail_repl.pass_decw.dfail_inv.comp_never.any
 android-dEQP-VK.pipeline.pipeline_library.stencil.nocolor.format.d32_sfloat_s8_uint_separate_layouts.states.fail_incc.pass_decw.dfail_keep.comp_never.any
 android-dEQP-VK.renderpasses.renderpass1.dedicated_allocation.formats.r16g16_uint.input.clear.dont_care.self_dep_draw_use_input_aspect_ms
+
+# See this entry in the VKCTS 1.4.4.2 -> 1.4.5.3 uprev fails list.
+dEQP-VK.*.custom_resolve.*.fdm_subsampled

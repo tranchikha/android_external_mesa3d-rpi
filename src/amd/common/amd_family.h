@@ -127,6 +127,7 @@ enum radeon_family
    CHIP_STRIX_HALO,     /* Ryzen AI MAX */
    CHIP_KRACKAN1,       /* Ryzen AI 330-350 */
    CHIP_GFX1153,
+   CHIP_GFX1156,
    /* GFX11.7 */
    CHIP_GFX1170,
    /* GFX12 (RDNA 4) */
@@ -230,10 +231,10 @@ enum vcn_version{
 
 enum vpe_version {
    VPE_UNKNOWN = 0,
-   VPE_6_1_0   = VPE_VERSION_VALUE(6, 1, 0),
-   VPE_6_1_1   = VPE_VERSION_VALUE(6, 1, 1),
-   VPE_6_1_2   = VPE_VERSION_VALUE(6, 1, 2),
-   VPE_6_1_3   = VPE_VERSION_VALUE(6, 1, 3),
+   VPE_1_0,
+   VPE_1_1,
+   VPE_2_0,
+   VPE_2_2,
 };
 
 #define SDMA_VERSION_VALUE(major, minor) (((major) << 8) | (minor))

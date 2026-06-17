@@ -465,6 +465,14 @@ vtn_pointer_dereference(struct vtn_builder *b,
       }
    }
 
+   /* Negative array indices into UBOs/SSBOs are UB (GLSL/SPIR-V spec), so
+    * we can treat all accesses as in-bounds regardless of whether the shader
+    * used OpInBoundsAccessChain.
+    */
+   const bool in_bounds = deref_chain->in_bounds ||
+                          base->mode == vtn_variable_mode_ubo ||
+                          base->mode == vtn_variable_mode_ssbo;
+
    if (idx == 0 && deref_chain->ptr_as_array) {
       /* We start with a deref cast to get the stride.  Hopefully, we'll be
        * able to delete that cast eventually.
@@ -475,7 +483,7 @@ vtn_pointer_dereference(struct vtn_builder *b,
       nir_def *index = vtn_access_link_as_ssa(b, deref_chain->link[0], 1,
                                                   tail->def.bit_size);
       tail = nir_build_deref_ptr_as_array(&b->nb, tail, index);
-      tail->arr.in_bounds = deref_chain->in_bounds;
+      tail->arr.in_bounds = in_bounds;
       idx++;
    }
 
@@ -498,7 +506,7 @@ vtn_pointer_dereference(struct vtn_builder *b,
             type = type->array_element;
          }
          tail = nir_build_deref_array(&b->nb, tail, arr_index);
-         tail->arr.in_bounds = deref_chain->in_bounds;
+         tail->arr.in_bounds = in_bounds;
       }
 
       access |= type->access;
@@ -2699,9 +2707,20 @@ vtn_cast_pointer(struct vtn_builder *b, struct vtn_pointer *p,
    vtn_assert(pointed == casted->type->pointed);
 
    if (p->deref) {
+      const struct glsl_type *deref_type = pointed->type;
+
+      /* Preserve the explicit stride when casting an untyped pointer to a raw
+       * SPIR-V matrix type because the raw type lacks it.
+       */
+      if (glsl_type_is_matrix(p->deref->type) &&
+          glsl_type_is_matrix(deref_type) &&
+          glsl_get_explicit_stride(p->deref->type) > 0 &&
+          glsl_get_explicit_stride(deref_type) == 0)
+         deref_type = p->deref->type;
+
       casted->deref = nir_build_deref_cast(&b->nb, &p->deref->def,
                                            p->deref->modes,
-                                           pointed->type, 0);
+                                           deref_type, 0);
    } else if (p->desc_index != NULL) {
       /* Nothing to do for descriptor index pointers. */
    } else if (p->var != NULL) {

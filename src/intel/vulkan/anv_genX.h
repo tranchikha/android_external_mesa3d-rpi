@@ -558,17 +558,15 @@ uint32_t genX(shader_cmd_size)(struct anv_device *device,
 static inline void
 genX(cmd_buffer_post_dispatch_wa)(struct anv_cmd_buffer *cmd_buffer)
 {
-   /* TODO: Add INTEL_NEEDS_WA_14025112257 check once HSD is propogated for all
-    * other impacted platforms.
-    */
-   if (cmd_buffer->device->info->ver >= 20 &&
-       anv_cmd_buffer_is_compute_queue(cmd_buffer)) {
+#if INTEL_NEEDS_WA_14025112257
+   if (anv_cmd_buffer_is_compute_queue(cmd_buffer)) {
       genX(batch_emit_pipe_control)(&cmd_buffer->batch,
                                     cmd_buffer->device->info,
                                     cmd_buffer->state.current_pipeline,
                                     ANV_PIPE_STATE_CACHE_INVALIDATE_BIT,
                                     "Wa_14025112257");
    }
+#endif
 }
 
 static inline void
@@ -577,7 +575,7 @@ genX(cmd_buffer_rhwo_wa_14024015672)(struct anv_cmd_buffer *cmd_buffer,
 {
    struct anv_device *device = cmd_buffer->device;
    const bool rhwo_opt_enable =
-      !device->physical->instance->intel_enable_wa_14024015672_msaa &&
+      !device->physical->instance->drirc.debug.wa_14024015672_msaa &&
       msaa_enabled;
    if (intel_needs_workaround(device->info, 14024015672) &&
        cmd_buffer->state.pending_rhwo_optimization_enabled != rhwo_opt_enable)

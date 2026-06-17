@@ -22,6 +22,8 @@
 #include "wsi_common.h"
 
 #include "util/build_id.h"
+#include "util/os_misc.h"
+#include "pvr_drirc.h"
 
 #include "pvr_debug.h"
 #include "pvr_device.h"
@@ -320,6 +322,18 @@ pvr_get_driver_build_sha(struct pvr_instance *instance)
    return true;
 }
 
+static void pvr_init_dri_options(struct pvr_instance *instance)
+{
+   pvr_parse_dri_options(&instance->drirc,
+                         &(driConfigFileParseParams) {
+                            .driverName = "pvr",
+                            .applicationName = instance->vk.app_info.app_name,
+                            .applicationVersion = instance->vk.app_info.app_version,
+                            .engineName = instance->vk.app_info.engine_name,
+                            .engineVersion = instance->vk.app_info.engine_version,
+                         });
+}
+
 VkResult pvr_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
                             const VkAllocationCallbacks *pAllocator,
                             VkInstance *pInstance)
@@ -357,6 +371,7 @@ VkResult pvr_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
       goto err_free_instance;
 
    pvr_process_debug_variable();
+   pvr_init_dri_options(instance);
 
    instance->active_device_count = 0;
 
@@ -377,6 +392,8 @@ VkResult pvr_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    return VK_SUCCESS;
 
 err_free_instance:
+   driDestroyOptionCache(&instance->drirc.options);
+   driDestroyOptionInfo(&instance->drirc.available_options);
    vk_free(pAllocator, instance);
    return result;
 }
@@ -390,6 +407,9 @@ void pvr_DestroyInstance(VkInstance _instance,
       return;
 
    VG(VALGRIND_DESTROY_MEMPOOL(instance));
+
+   driDestroyOptionCache(&instance->drirc.options);
+   driDestroyOptionInfo(&instance->drirc.available_options);
 
    vk_instance_finish(&instance->vk);
    vk_free(&instance->vk.alloc, instance);

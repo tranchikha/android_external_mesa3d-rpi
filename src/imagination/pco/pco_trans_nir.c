@@ -938,6 +938,24 @@ static pco_instr *trans_store_common_store(trans_ctx *tctx,
                          .rpt = chans);
 }
 
+static pco_instr *trans_load_shared_base_ptr(trans_ctx *tctx, pco_ref dest)
+{
+   assert(tctx->stage == MESA_SHADER_COMPUTE);
+   assert(tctx->shader->data.cs.shmem.count > 0);
+   assert(tctx->shader->data.cs.global_shmem);
+
+   unsigned chans = pco_ref_get_chans(dest);
+   assert(chans == 2);
+   assert(pco_ref_get_bits(dest) == 32);
+
+   pco_ref shmem_base_addr =
+      pco_ref_hwreg_vec(tctx->shader->data.cs.shmem.start,
+                        PCO_REG_CLASS_SHARED,
+                        chans);
+
+   return pco_mov(&tctx->b, dest, shmem_base_addr, .rpt = chans);
+}
+
 static inline enum pco_atom_op to_atom_op(nir_atomic_op op)
 {
    switch (op) {
@@ -1879,6 +1897,37 @@ static enum pco_pck_fmt pco_pck_format_from_pipe_format(enum pipe_format fmt)
    UNREACHABLE("Unsupported format.");
 }
 
+static pco_instr *trans_subgroup_first_invocation(trans_ctx *tctx, pco_ref dest)
+{
+   /* N.B. link register can only hold 31 bits, but that's plenty for
+    * first_invocation.
+    */
+
+   /* Backup/restore is disabled as nothing else is using the link register. */
+   /* Backup the link register's contents. */
+   /* pco_ref link_backup = pco_ref_new_ssa32(tctx->func); */
+   /* pco_savl(&tctx->b, link_backup); */
+
+   /* With setl only the first valid instance within a slot will write its
+    * instance number to the link register.
+    */
+   pco_ref inst_num = pco_ref_new_ssa32(tctx->func);
+   pco_mov(&tctx->b,
+           inst_num,
+           pco_ref_hwreg(PCO_SR_INST_NUM, PCO_REG_CLASS_SPEC));
+
+   pco_setl(&tctx->b, inst_num);
+
+   /* Retrieve the instance number stored in the link register. */
+   pco_ref inst_num_read = pco_ref_new_ssa32(tctx->func);
+   pco_savl(&tctx->b, inst_num_read);
+
+   /* Restore the link register's previous contents. */
+   /* pco_setl(&tctx->b, link_backup); */
+
+   return pco_mov(&tctx->b, dest, inst_num_read);
+}
+
 /**
  * \brief Translates a NIR intrinsic instruction into PCO.
  *
@@ -2049,6 +2098,10 @@ static pco_instr *trans_intr(trans_ctx *tctx, nir_intrinsic_instr *intr)
                                        src[1],
                                        true,
                                        &tctx->shader->data.cs.shmem);
+      break;
+
+   case nir_intrinsic_load_shared_base_ptr:
+      instr = trans_load_shared_base_ptr(tctx, dest);
       break;
 
    case nir_intrinsic_shared_atomic:
@@ -2366,6 +2419,18 @@ static pco_instr *trans_intr(trans_ctx *tctx, nir_intrinsic_instr *intr)
                       pco_ref_hwreg(PCO_SR_INST_NUM, PCO_REG_CLASS_SPEC));
       break;
 
+   case nir_intrinsic_load_slot_num_pco:
+      instr = pco_mov(&tctx->b,
+                      dest,
+                      pco_ref_hwreg(PCO_SR_SLOT_NUM, PCO_REG_CLASS_SPEC));
+      break;
+
+   case nir_intrinsic_load_cluster_num_pco:
+      instr = pco_mov(&tctx->b,
+                      dest,
+                      pco_ref_hwreg(PCO_SR_CLUSTER_NUM, PCO_REG_CLASS_SPEC));
+      break;
+
    case nir_intrinsic_load_shared_reg_alloc_size_pco:
       instr = pco_mov(&tctx->b,
                       dest,
@@ -2467,6 +2532,24 @@ static pco_instr *trans_intr(trans_ctx *tctx, nir_intrinsic_instr *intr)
                         .scale = scale);
       break;
    }
+
+   case nir_intrinsic_as_uniform:
+      instr = pco_mov(&tctx->b, dest, src[0]);
+      break;
+
+   case nir_intrinsic_first_invocation:
+      instr = trans_subgroup_first_invocation(tctx, dest);
+      break;
+
+   case nir_intrinsic_vote_any:
+   case nir_intrinsic_vote_all:
+      instr = pco_vote(&tctx->b,
+                       dest,
+                       src[0],
+                       .vote_op = intr->intrinsic == nir_intrinsic_vote_all
+                                     ? PCO_VOTE_OP_ALL
+                                     : PCO_VOTE_OP_ANY);
+      break;
 
    default:
       printf("Unsupported intrinsic: \"");

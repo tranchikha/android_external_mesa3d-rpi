@@ -168,7 +168,7 @@ declare_global_input_sgprs(struct radv_shader_args_state *state, const enum amd_
       if (info->merged_shader_compiled_separately || info->loads_dynamic_offsets) {
          RADV_ADD_UD_ARG(state, 1, AC_ARG_CONST_ADDR, ac.dynamic_descriptors, AC_UD_DYNAMIC_DESCRIPTORS);
 
-         if (info->loads_dynamic_descriptors_offset_addr) {
+         if (info->merged_shader_compiled_separately || info->loads_dynamic_descriptors_offset_addr) {
             RADV_ADD_UD_ARG(state, 1, AC_ARG_CONST_ADDR, ac.dynamic_descriptors_offset_addr,
                             AC_UD_DYNAMIC_DESCRIPTORS_OFFSET_ADDR);
          }
@@ -342,7 +342,7 @@ declare_ps_input_vgprs(struct radv_shader_args_state *state, const struct radv_s
    RADV_ADD_ARG(state, AC_ARG_VGPR, 2, AC_ARG_VALUE, ac.linear_sample);
    RADV_ADD_ARG(state, AC_ARG_VGPR, 2, AC_ARG_VALUE, ac.linear_center);
    RADV_ADD_ARG(state, AC_ARG_VGPR, 2, AC_ARG_VALUE, ac.linear_centroid);
-   RADV_ADD_NULL_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE); /* line stipple tex */
+   RADV_ADD_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.line_stipple_tex_ena);
    RADV_ADD_ARRAY_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.frag_pos, 0);
    RADV_ADD_ARRAY_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.frag_pos, 1);
    RADV_ADD_ARRAY_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.frag_pos, 2);
@@ -420,6 +420,9 @@ radv_ps_needs_state_sgpr(const struct radv_shader_info *info, const struct radv_
    if (info->ps.load_rasterization_prim && gfx_state->unknown_rast_prim)
       return true;
 
+   if (info->ps.selects_frag_coord_xy_dynamically || info->ps.selects_sample_mask_in_dynamically)
+      return true;
+
    return false;
 }
 
@@ -462,6 +465,7 @@ declare_unmerged_vs_tcs_args(struct radv_shader_args_state *state, const enum am
    ac_add_preserved(&state->args->ac, &state->args->descriptors[0]);
    ac_add_preserved(&state->args->ac, &state->args->ac.push_constants);
    ac_add_preserved(&state->args->ac, &state->args->ac.dynamic_descriptors);
+   ac_add_preserved(&state->args->ac, &state->args->ac.dynamic_descriptors_offset_addr);
    ac_add_preserved(&state->args->ac, &state->args->ac.view_index);
    ac_add_preserved(&state->args->ac, &state->args->ac.tcs_offchip_layout);
    ac_add_preserved(&state->args->ac, &state->args->epilog_pc);
@@ -528,6 +532,7 @@ declare_unmerged_vs_tes_gs_args(struct radv_shader_args_state *state, const enum
    ac_add_preserved(&state->args->ac, &state->args->descriptors[0]);
    ac_add_preserved(&state->args->ac, &state->args->ac.push_constants);
    ac_add_preserved(&state->args->ac, &state->args->ac.dynamic_descriptors);
+   ac_add_preserved(&state->args->ac, &state->args->ac.dynamic_descriptors_offset_addr);
    ac_add_preserved(&state->args->ac, &state->args->streamout_buffers);
    if (gfx_level >= GFX12)
       ac_add_preserved(&state->args->ac, &state->args->streamout_state);
@@ -960,18 +965,20 @@ radv_gather_shader_args_debug_info(struct radv_shader_args_state *state, struct 
 
 void
 radv_declare_shader_args(const struct radv_compiler_info *compiler_info,
-                         const struct radv_graphics_state_key *gfx_state, const struct radv_shader_info *info,
-                         mesa_shader_stage stage, mesa_shader_stage previous_stage, struct radv_shader_args *args,
-                         struct radv_shader_debug_info *debug)
+                         const struct radv_graphics_state_key *gfx_state, struct radv_shader_stage *stage,
+                         mesa_shader_stage previous_stage, struct radv_shader_debug_info *debug)
 {
+   const struct radv_shader_info *info = &stage->info;
+   struct radv_shader_args *args = &stage->args;
+
    struct radv_shader_args_state state = {
       .args = args,
    };
 
    struct user_sgpr_info user_sgpr_info = {0};
 
-   if (!mesa_shader_stage_is_rt(stage)) {
-      declare_shader_args(compiler_info, &state, gfx_state, info, stage, previous_stage, NULL);
+   if (!mesa_shader_stage_is_rt(stage->stage)) {
+      declare_shader_args(compiler_info, &state, gfx_state, info, stage->stage, previous_stage, NULL);
 
       uint32_t num_user_sgprs = args->num_user_sgprs;
       if (info->loads_push_constants)
@@ -984,7 +991,7 @@ radv_declare_shader_args(const struct radv_compiler_info *compiler_info,
 
       const enum amd_gfx_level gfx_level = compiler_info->ac->gfx_level;
       uint32_t available_sgprs =
-         gfx_level >= GFX9 && stage != MESA_SHADER_COMPUTE && stage != MESA_SHADER_TASK ? 32 : 16;
+         gfx_level >= GFX9 && stage->stage != MESA_SHADER_COMPUTE && stage->stage != MESA_SHADER_TASK ? 32 : 16;
       uint32_t remaining_sgprs = available_sgprs - num_user_sgprs;
 
       user_sgpr_info.remaining_sgprs = remaining_sgprs;
@@ -1007,13 +1014,13 @@ radv_declare_shader_args(const struct radv_compiler_info *compiler_info,
          allocate_inline_push_consts(info, &user_sgpr_info);
    }
 
-   state.gather_debug_info = debug && compiler_info->debug.keep_shader_info;
+   state.gather_debug_info = stage->key.keep_shader_arg_info;
    if (state.gather_debug_info) {
       state.ctx = ralloc_context(NULL);
       state.gather_debug_info &= !!state.ctx;
    }
 
-   declare_shader_args(compiler_info, &state, gfx_state, info, stage, previous_stage, &user_sgpr_info);
+   declare_shader_args(compiler_info, &state, gfx_state, info, stage->stage, previous_stage, &user_sgpr_info);
 
    if (state.gather_debug_info)
       radv_gather_shader_args_debug_info(&state, debug);
